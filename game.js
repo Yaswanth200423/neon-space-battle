@@ -1,0 +1,21 @@
+const socket=io();const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id);let myId=null,roomCode='',snapshot={players:[],bullets:[]};let angle=0;const keys={up:false,down:false,left:false,right:false,shoot:false};
+const stars=Array.from({length:145},()=>({x:Math.random()*1200,y:Math.random()*700,r:Math.random()*1.8+.3,a:Math.random()*.6+.2}));
+function toast(msg){$('toast').textContent=msg;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),2300)}
+$('join').onclick=()=>{socket.emit('join',{name:$('name').value,room:$('room').value},res=>{if(res.error){$('error').textContent=res.error;return;}myId=res.id;roomCode=res.room;$('menu').style.display='none';$('roomLabel').textContent='ROOM: '+roomCode;$('copy').disabled=false;toast('Arena joined! Room: '+roomCode)})};
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(roomCode);toast('Room code copied: '+roomCode)}catch{toast('Room code: '+roomCode)}};
+socket.on('state',s=>{snapshot=s;const me=s.players.find(p=>p.id===myId);if(!me)return;$('healthText').textContent=me.hp+' / 100';$('healthFill').style.width=me.hp+'%';$('score').textContent=me.score;$('kills').textContent=me.kills;$('leaderboard').innerHTML=s.players.slice().sort((a,b)=>b.score-a.score).map((p,i)=>`<div class="leader"><span>${i+1}. ${escapeHtml(p.name)} ${p.id===myId?'(you)':''}</span><strong>${p.score}</strong></div>`).join('');$('dead').hidden=me.alive});
+socket.on('notice',toast);socket.on('eliminated',d=>{$('deadText').textContent='Eliminated by '+d.killer+' · Respawning in 2.5s'});socket.on('respawned',()=>toast('You respawned!'));
+function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+const bindings={KeyW:'up',ArrowUp:'up',KeyS:'down',ArrowDown:'down',KeyA:'left',ArrowLeft:'left',KeyD:'right',ArrowRight:'right',Space:'shoot'};
+window.addEventListener('keydown',e=>{if(document.activeElement.tagName==='INPUT')return;if(bindings[e.code]){keys[bindings[e.code]]=true;e.preventDefault()}});
+window.addEventListener('keyup',e=>{if(bindings[e.code]){keys[bindings[e.code]]=false;e.preventDefault()}});
+window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false});
+canvas.addEventListener('mousemove',e=>{const rect=canvas.getBoundingClientRect();const x=(e.clientX-rect.left)*1200/rect.width,y=(e.clientY-rect.top)*700/rect.height;const me=snapshot.players.find(p=>p.id===myId);if(me)angle=Math.atan2(y-me.y,x-me.x)});
+canvas.addEventListener('mousedown',()=>keys.shoot=true);window.addEventListener('mouseup',()=>keys.shoot=false);
+setInterval(()=>{if(myId)socket.emit('input',{...keys,angle})},1000/30);
+function draw(){ctx.fillStyle='#030a18';ctx.fillRect(0,0,1200,700);ctx.strokeStyle='#12304a55';ctx.lineWidth=1;for(let x=0;x<1200;x+=60){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,700);ctx.stroke()}for(let y=0;y<700;y+=60){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(1200,y);ctx.stroke()}
+for(const s of stars){ctx.globalAlpha=s.a;ctx.fillStyle='#b7faff';ctx.fillRect(s.x,s.y,s.r,s.r)}ctx.globalAlpha=1;
+for(const b of snapshot.bullets){ctx.shadowBlur=18;ctx.shadowColor='#ff58bd';ctx.fillStyle='#ff83d5';ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill()}ctx.shadowBlur=0;
+for(const p of snapshot.players){if(!p.alive)continue;const mine=p.id===myId,color=mine?'#44f5ff':'#ff65bd';ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);ctx.shadowColor=color;ctx.shadowBlur=20;ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(26,0);ctx.lineTo(-18,-17);ctx.lineTo(-11,0);ctx.lineTo(-18,17);ctx.closePath();ctx.fill();ctx.fillStyle='#081727';ctx.beginPath();ctx.moveTo(9,0);ctx.lineTo(-8,-6);ctx.lineTo(-8,6);ctx.closePath();ctx.fill();ctx.restore();ctx.shadowBlur=0;if(p.invulnerable){ctx.strokeStyle='#ffffff88';ctx.beginPath();ctx.arc(p.x,p.y,30,0,Math.PI*2);ctx.stroke()}
+ctx.textAlign='center';ctx.font='bold 14px Segoe UI';ctx.fillStyle=color;ctx.fillText(p.name+(mine?' ★':''),p.x,p.y-34);ctx.fillStyle='#223246';ctx.fillRect(p.x-25,p.y+30,50,5);ctx.fillStyle=p.hp>30?'#30f5b1':'#ff526e';ctx.fillRect(p.x-25,p.y+30,50*p.hp/100,5)}requestAnimationFrame(draw)}draw();
