@@ -18,7 +18,7 @@ io.on('connection',socket=>{
   const code=cleanRoom(room)||Math.random().toString(36).slice(2,7).toUpperCase();
   let r=rooms.get(code); if(!r){r={code,players:{},bullets:[],last:Date.now()};rooms.set(code,r)}
   if(Object.keys(r.players).length>=MAX)return reply({error:'Room full (maximum 4 players).'});
-  const p={id:socket.id,name:cleanName(name),x:0,y:0,angle:0,hp:100,score:0,kills:0,alive:true,keys:{},lastShot:0,invulnerableUntil:0};spawn(p);r.players[socket.id]=p;socket.data.room=code;socket.join(code);
+  const p={id:socket.id,name:cleanName(name),x:0,y:0,angle:0,hp:100,score:0,kills:0,alive:true,keys:{up:false,down:false,left:false,right:false,shoot:false},lastShot:0,invulnerableUntil:0};spawn(p);r.players[socket.id]=p;socket.data.room=code;socket.join(code);
   reply({ok:true,id:socket.id,room:code});io.to(code).emit('notice',p.name+' joined the arena');
  });
  socket.on('input',data=>{const r=roomOf(socket);if(!r)return;const p=r.players[socket.id];if(!p)return;p.keys={up:!!data?.up,down:!!data?.down,left:!!data?.left,right:!!data?.right,shoot:!!data?.shoot};if(Number.isFinite(data?.angle))p.angle=data.angle;});
@@ -28,7 +28,8 @@ setInterval(()=>{const now=Date.now();for(const r of rooms.values()){
  const dt=Math.min((now-r.last)/1000,.05);r.last=now;
  for(const p of Object.values(r.players)){
   if(!p.alive)continue;
-  let dx=Number(p.keys.right)-Number(p.keys.left),dy=Number(p.keys.down)-Number(p.keys.up),len=Math.hypot(dx,dy)||1;
+  if(!Number.isFinite(p.x)||!Number.isFinite(p.y)) spawn(p);
+  let dx=Number(!!p.keys.right)-Number(!!p.keys.left),dy=Number(!!p.keys.down)-Number(!!p.keys.up),len=Math.hypot(dx,dy)||1;
   p.x=clamp(p.x+dx/len*SPEED*dt,20,W-20);p.y=clamp(p.y+dy/len*SPEED*dt,20,H-20);
   if(p.keys.shoot&&now-p.lastShot>260){p.lastShot=now;r.bullets.push({id:Math.random().toString(36).slice(2),owner:p.id,x:p.x+Math.cos(p.angle)*25,y:p.y+Math.sin(p.angle)*25,vx:Math.cos(p.angle)*BULLET_SPEED,vy:Math.sin(p.angle)*BULLET_SPEED,ttl:1.5});}
  }
