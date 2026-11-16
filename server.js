@@ -10,8 +10,8 @@ const cleanRoom = s => String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slic
 const cleanName = s => String(s||'Pilot').replace(/[^\w -]/g,'').trim().slice(0,16)||'Pilot';
 const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 function roomOf(socket){return rooms.get(socket.data.room)}
-function spawn(p){p.x=80+Math.random()*(W-160);p.y=80+Math.random()*(H-160);p.hp=100;p.alive=true;p.invulnerableUntil=Date.now()+1800;p.lastShot=0;}
-function state(r){return {players:Object.values(r.players).map(p=>({id:p.id,name:p.name,x:p.x,y:p.y,angle:p.angle,hp:p.hp,score:p.score,kills:p.kills,alive:p.alive,invulnerable:p.invulnerableUntil>Date.now()})),bullets:r.bullets,room:r.code}}
+function spawn(p){p.x=80+Math.random()*(W-160);p.y=80+Math.random()*(H-160);p.hp=100;p.alive=true;p.invulnerableUntil=Date.now()+1800;p.lastShot=0;p.shootHeld=false;p.moving=false;}
+function state(r){return {players:Object.values(r.players).map(p=>({id:p.id,name:p.name,x:p.x,y:p.y,angle:p.angle,hp:p.hp,score:p.score,kills:p.kills,alive:p.alive,invulnerable:p.invulnerableUntil>Date.now(),moving:p.moving})),bullets:r.bullets,room:r.code}}
 io.on('connection',socket=>{
  socket.on('join',({name,room}={},reply=()=>{})=>{
   if(socket.data.room) return reply({error:'Already in a room. Refresh to join another.'});
@@ -20,6 +20,10 @@ io.on('connection',socket=>{
   if(Object.keys(r.players).length>=MAX)return reply({error:'Room full (maximum 4 players).'});
   const p={id:socket.id,name:cleanName(name),x:0,y:0,angle:0,hp:100,score:0,kills:0,alive:true,keys:{up:false,down:false,left:false,right:false,shoot:false},lastShot:0,invulnerableUntil:0};spawn(p);r.players[socket.id]=p;socket.data.room=code;socket.join(code);
   reply({ok:true,id:socket.id,room:code});io.to(code).emit('notice',p.name+' joined the arena');
+ });
+ socket.on('fireBurst',()=>{const r=roomOf(socket);if(!r)return;const p=r.players[socket.id];if(!p||!p.alive)return;const now=Date.now();if(now-p.lastShot<350)return;p.lastShot=now;
+  for(let i=-3;i<=3;i++){const direction=p.angle+i*.085,side=i*5;r.bullets.push({id:Math.random().toString(36).slice(2),owner:p.id,x:p.x+Math.cos(p.angle)*28-Math.sin(p.angle)*side,y:p.y+Math.sin(p.angle)*28+Math.cos(p.angle)*side,vx:Math.cos(direction)*BULLET_SPEED,vy:Math.sin(direction)*BULLET_SPEED,ttl:1.5});}
+  io.to(r.code).emit('missileLaunch',{owner:p.id,x:p.x,y:p.y,count:7});
  });
  socket.on('input',data=>{const r=roomOf(socket);if(!r)return;const p=r.players[socket.id];if(!p)return;p.keys={up:!!data?.up,down:!!data?.down,left:!!data?.left,right:!!data?.right,shoot:!!data?.shoot};if(Number.isFinite(data?.angle))p.angle=data.angle;});
  socket.on('disconnect',()=>{const r=roomOf(socket);if(!r)return;const p=r.players[socket.id];delete r.players[socket.id];if(p)io.to(r.code).emit('notice',p.name+' left');if(!Object.keys(r.players).length)rooms.delete(r.code)});
@@ -30,11 +34,11 @@ setInterval(()=>{const now=Date.now();for(const r of rooms.values()){
   if(!p.alive)continue;
   if(!Number.isFinite(p.x)||!Number.isFinite(p.y)) spawn(p);
   let dx=Number(!!p.keys.right)-Number(!!p.keys.left),dy=Number(!!p.keys.down)-Number(!!p.keys.up),len=Math.hypot(dx,dy)||1;
-  p.x=clamp(p.x+dx/len*SPEED*dt,20,W-20);p.y=clamp(p.y+dy/len*SPEED*dt,20,H-20);
-  if(p.keys.shoot&&now-p.lastShot>260){p.lastShot=now;r.bullets.push({id:Math.random().toString(36).slice(2),owner:p.id,x:p.x+Math.cos(p.angle)*25,y:p.y+Math.sin(p.angle)*25,vx:Math.cos(p.angle)*BULLET_SPEED,vy:Math.sin(p.angle)*BULLET_SPEED,ttl:1.5});}
+  p.moving=dx!==0||dy!==0;p.x=clamp(p.x+dx/len*SPEED*dt,20,W-20);p.y=clamp(p.y+dy/len*SPEED*dt,20,H-20);
+
  }
  const next=[];for(const b of r.bullets){b.x+=b.vx*dt;b.y+=b.vy*dt;b.ttl-=dt;if(b.ttl<=0||b.x<0||b.x>W||b.y<0||b.y>H)continue;
- let hit=false;for(const p of Object.values(r.players)){if(!p.alive||p.id===b.owner||now<p.invulnerableUntil)continue;if(Math.hypot(p.x-b.x,p.y-b.y)<22){hit=true;p.hp=Math.max(0,p.hp-25);if(p.hp===0){p.alive=false;const killer=r.players[b.owner];if(killer){killer.kills++;killer.score+=100;}io.to(p.id).emit('eliminated',{killer:killer?.name||'Unknown'});setTimeout(()=>{if(r.players[p.id]){spawn(p);io.to(p.id).emit('respawned')}},2500);}break;}}
+ let hit=false;for(const p of Object.values(r.players)){if(!p.alive||p.id===b.owner||now<p.invulnerableUntil)continue;if(Math.hypot(p.x-b.x,p.y-b.y)<22){hit=true;io.to(r.code).emit('missileImpact',{x:b.x,y:b.y});p.hp=Math.max(0,p.hp-25);if(p.hp===0){p.alive=false;const killer=r.players[b.owner];if(killer){killer.kills++;killer.score+=100;}io.to(p.id).emit('eliminated',{killer:killer?.name||'Unknown'});setTimeout(()=>{if(r.players[p.id]){spawn(p);io.to(p.id).emit('respawned')}},2500);}break;}}
  if(!hit)next.push(b);
  }r.bullets=next;io.to(r.code).emit('state',state(r));
 }},1000/30);
